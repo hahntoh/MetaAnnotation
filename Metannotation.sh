@@ -120,7 +120,7 @@ ENHANCE选项:
     -b, --bracken 目录    包含Bracken结果的目录
     -o, --output 目录     增强文件的输出目录
 
-详细文档，请访问: https://github.com/username/metagen-pipe
+详细文档，请访问: https://github.com/hahntoh/Metannotation
 EOF
 }
 
