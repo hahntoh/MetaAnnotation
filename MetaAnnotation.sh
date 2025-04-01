@@ -5,6 +5,7 @@
 #
 # 作者：Hahn
 # 日期：2025-03-27
+#
 
 set -e  # 出错时退出
 
@@ -55,7 +56,7 @@ MetaGenPipe v${VERSION}
 一个综合性的宏基因组分析流程
 
 用法:
-    ./metagen.sh [命令] [选项]
+    ./MetaAnnotation.sh [命令] [选项]
 
 命令:
     setup         创建目录结构
@@ -91,7 +92,8 @@ GROUP选项:
     -i, --input 目录      包含配对末端读取的输入目录
     -o, --output 目录     分组样本的输出目录
     -s, --size 数字       每组样本数量 (默认: ${DEFAULT_GROUP_SIZE})
-    -p, --pattern 字符串  匹配的文件模式 (默认: "*.1.paired.fq.gz")
+    --r1-pattern 字符串   匹配的R1文件模式 (默认: "*.1.paired.fq.gz")
+    --r2-pattern 字符串   匹配的R2文件模式 (默认: 自动从R1模式生成)
 
 KRAKEN选项:
     -i, --input 目录      包含分组样本的输入目录
@@ -101,6 +103,8 @@ KRAKEN选项:
     -t, --threads 数字    每个作业的线程数 (默认: ${DEFAULT_THREADS})
     -c, --confidence 数字 置信度阈值 (默认: ${DEFAULT_CONFIDENCE})
     -m, --min-hits 数字   最小命中组数 (默认: ${DEFAULT_MIN_HIT_GROUPS})
+    --r1-pattern 字符串   匹配的R1文件模式 (默认: "*.1.paired.fq.gz")
+    --r2-pattern 字符串   匹配的R2文件模式 (默认: 自动从R1模式生成)
 
 BRACKEN选项:
     -i, --input 目录      包含Kraken2结果的输入目录
@@ -117,7 +121,7 @@ ENHANCE选项:
     -b, --bracken 目录    包含Bracken结果的目录
     -o, --output 目录     增强文件的输出目录
 
-详细文档，请访问:https://github.com/hahntoh/MetaAnnotation
+详细文档，请访问: https://github.com/username/metagen-pipe
 EOF
 }
 
@@ -222,8 +226,6 @@ function setup_directories {
 }
 
 
-
-
 # Part 2
 
 # 将样本分组成批次
@@ -312,21 +314,26 @@ function group_samples {
         # 获取R1文件名
         local r1_basename=$(basename "$r1_file")
         
-        # 从R1文件名生成R2文件名
-        # 这是一个简单的替换，如果文件命名更复杂，可能需要调整
-        local r2_basename=$(basename "$r1_file" | sed "s|$r1_pattern|$r2_pattern|g")
-        if [ "$r1_basename" = "$r2_basename" ]; then
-            # 如果替换失败，尝试使用模式替换
-            if [[ "$r1_pattern" == *".1."* ]] && [[ "$r2_pattern" == *".2."* ]]; then
-                r2_basename="${r1_basename/.1./.2.}"
-            elif [[ "$r1_pattern" == *"_1."* ]] && [[ "$r2_pattern" == *"_2."* ]]; then
-                r2_basename="${r1_basename/_1./_2.}"
-            elif [[ "$r1_pattern" == *".R1."* ]] && [[ "$r2_pattern" == *".R2."* ]]; then
-                r2_basename="${r1_basename/.R1./.R2.}"
-            elif [[ "$r1_pattern" == *"_R1_"* ]] && [[ "$r2_pattern" == *"_R2_"* ]]; then
-                r2_basename="${r1_basename/_R1_/_R2_}"
-            elif [[ "$r1_pattern" == *"_R1."* ]] && [[ "$r2_pattern" == *"_R2."* ]]; then
-                r2_basename="${r1_basename/_R1./_R2.}"
+        # 通过替换获取R2文件名
+        local r2_basename=""
+        if [[ "$r1_pattern" == *".1."* ]] && [[ "$r2_pattern" == *".2."* ]]; then
+            r2_basename="${r1_basename/.1./.2.}"
+        elif [[ "$r1_pattern" == *"_1."* ]] && [[ "$r2_pattern" == *"_2."* ]]; then
+            r2_basename="${r1_basename/_1./_2.}"
+        elif [[ "$r1_pattern" == *".R1."* ]] && [[ "$r2_pattern" == *".R2."* ]]; then
+            r2_basename="${r1_basename/.R1./.R2.}"
+        elif [[ "$r1_pattern" == *"_R1_"* ]] && [[ "$r2_pattern" == *"_R2_"* ]]; then
+            r2_basename="${r1_basename/_R1_/_R2_}"
+        elif [[ "$r1_pattern" == *"_R1."* ]] && [[ "$r2_pattern" == *"_R2."* ]]; then
+            r2_basename="${r1_basename/_R1./_R2.}"
+        else
+            # 使用提供的R2模式或尝试简单替换
+            if [[ "$r1_basename" == *"1"* ]] && [[ "$r2_pattern" == *"2"* ]]; then
+                # 简单的1替换为2
+                r2_basename="${r1_basename/1/2}"
+            else
+                # 直接使用原始R2模式解析
+                r2_basename=$(echo "$r1_basename" | sed "s/${r1_pattern##*/}/${r2_pattern##*/}/")
             fi
         fi
         
@@ -363,17 +370,36 @@ function create_kraken_scripts {
     local threads="$4"
     local confidence="$5"
     local min_hit_groups="$6"
-    local file_pattern="$7"
+    local r1_pattern="$7"
+    local r2_pattern="$8"  # 接收显式的R2模式
     
     # 设置默认值
-    if [ -z "$file_pattern" ]; then
-        file_pattern="*.1.paired.fq.gz"
+    if [ -z "$r1_pattern" ]; then
+        r1_pattern="*.1.paired.fq.gz"
+    fi
+    
+    # 如果未提供r2_pattern，从r1_pattern派生
+    if [ -z "$r2_pattern" ]; then
+        if [[ "$r1_pattern" == *".1."* ]]; then
+            r2_pattern="${r1_pattern/.1./.2.}"
+        elif [[ "$r1_pattern" == *"_1."* ]]; then
+            r2_pattern="${r1_pattern/_1./_2.}"
+        elif [[ "$r1_pattern" == *".R1."* ]]; then
+            r2_pattern="${r1_pattern/.R1./.R2.}"
+        elif [[ "$r1_pattern" == *"_R1_"* ]]; then
+            r2_pattern="${r1_pattern/_R1_/_R2_}"
+        elif [[ "$r1_pattern" == *"_R1."* ]]; then
+            r2_pattern="${r1_pattern/_R1./_R2.}"
+        else
+            # 如果不匹配任何已知模式，使用简单替换
+            r2_pattern="${r1_pattern/1/2}"
+        fi
     fi
     
     local scripts_dir="${output_dir}/scripts"
     mkdir -p "$scripts_dir"
     
-    log "INFO" "创建Kraken2脚本..."
+    log "INFO" "创建Kraken2脚本，使用模式 R1: $r1_pattern, R2: $r2_pattern..."
     
     # 查找所有组目录
     local group_dirs=$(find "$input_dir" -type d -name "group*" | sort)
@@ -382,12 +408,6 @@ function create_kraken_scripts {
         log "ERROR" "在$input_dir中未找到组目录"
         exit 1
     fi
-    
-    # 提取基本模式以确定第二读取文件模式
-    local base_pattern="${file_pattern%.*.*}"
-    local extension="${file_pattern#*.*.}"
-    local r1_pattern="${file_pattern}"
-    local r2_pattern="${base_pattern}.2.${extension}"
     
     # 为每个组创建单独的脚本
     for group_dir in $group_dirs; do
@@ -420,12 +440,15 @@ LOG_FILE="\$LOG_DIR/${group_name}_process.log"
 echo "===== 开始处理${group_name} =====" | tee -a "\$LOG_FILE"
 echo "开始时间: \$(date)" | tee -a "\$LOG_FILE"
 
-# 查找所有配对末端文件
-FQ1_FILES=\$(find "\$INPUT_DIR" -name "$r1_pattern")
+# 配置文件模式
+R1_PATTERN="${r1_pattern}"
+R2_PATTERN="${r2_pattern}"
 
-# 首先打印命令行接收到的模式
-echo "命令行R1模式: $r1_pattern" | tee -a "\$LOG_FILE" 
-echo "命令行R2模式: $r2_pattern" | tee -a "\$LOG_FILE"
+echo "配置的R1模式: \$R1_PATTERN" | tee -a "\$LOG_FILE"
+echo "配置的R2模式: \$R2_PATTERN" | tee -a "\$LOG_FILE"
+
+# 查找所有配对末端文件
+FQ1_FILES=\$(find "\$INPUT_DIR" -name "\$R1_PATTERN")
 
 # 处理每个样本
 for FQ1 in \$FQ1_FILES; do
@@ -433,65 +456,96 @@ for FQ1 in \$FQ1_FILES; do
     BASE_NAME=\$(basename "\$FQ1")
     DIR_NAME=\$(dirname "\$FQ1")
     
-    # 尝试多种常见的替换模式找到R2文件
-    # 1. 常见模式1: .1. → .2.
-    R2_NAME_1=\$(echo "\$BASE_NAME" | sed 's/\.1\./\.2\./g')
-    FQ2_1="\$DIR_NAME/\$R2_NAME_1"
+    # 根据提供的模式生成R2文件名
+    R2_NAME=""
     
-    # 2. 常见模式2: _1. → _2.
-    R2_NAME_2=\$(echo "\$BASE_NAME" | sed 's/_1\./_2\./g')
-    FQ2_2="\$DIR_NAME/\$R2_NAME_2"
-    
-    # 3. 常见模式3: _R1_ → _R2_
-    R2_NAME_3=\$(echo "\$BASE_NAME" | sed 's/_R1_/_R2_/g')
-    FQ2_3="\$DIR_NAME/\$R2_NAME_3"
-    
-    # 4. 常见模式4: _R1. → _R2.
-    R2_NAME_4=\$(echo "\$BASE_NAME" | sed 's/_R1\./_R2\./g')
-    FQ2_4="\$DIR_NAME/\$R2_NAME_4"
-    
-    # 5. 将数字1替换为2（最后的备选方案）
-    R2_NAME_5=\$(echo "\$BASE_NAME" | sed 's/1/2/g')
-    FQ2_5="\$DIR_NAME/\$R2_NAME_5"
-    
-    # 检查哪个R2文件存在
-    if [ -f "\$FQ2_1" ]; then
-        FQ2="\$FQ2_1"
-        R2_NAME="\$R2_NAME_1"
-        echo "找到R2文件(模式1): \$FQ2" | tee -a "\$LOG_FILE"
-    elif [ -f "\$FQ2_2" ]; then
-        FQ2="\$FQ2_2"
-        R2_NAME="\$R2_NAME_2"
-        echo "找到R2文件(模式2): \$FQ2" | tee -a "\$LOG_FILE"
-    elif [ -f "\$FQ2_3" ]; then
-        FQ2="\$FQ2_3"
-        R2_NAME="\$R2_NAME_3"
-        echo "找到R2文件(模式3): \$FQ2" | tee -a "\$LOG_FILE"
-    elif [ -f "\$FQ2_4" ]; then
-        FQ2="\$FQ2_4"
-        R2_NAME="\$R2_NAME_4"
-        echo "找到R2文件(模式4): \$FQ2" | tee -a "\$LOG_FILE"
-    elif [ -f "\$FQ2_5" ]; then
-        FQ2="\$FQ2_5"
-        R2_NAME="\$R2_NAME_5"
-        echo "找到R2文件(模式5): \$FQ2" | tee -a "\$LOG_FILE"
+    # 1. 直接从R1文件名生成R2文件名 - 使用配置的模式
+    if [[ "\$R1_PATTERN" == *".1."* ]] && [[ "\$R2_PATTERN" == *".2."* ]]; then
+        R2_NAME="\${BASE_NAME/.1./.2.}"
+    elif [[ "\$R1_PATTERN" == *"_1."* ]] && [[ "\$R2_PATTERN" == *"_2."* ]]; then
+        R2_NAME="\${BASE_NAME/_1./_2.}"
+    elif [[ "\$R1_PATTERN" == *".R1."* ]] && [[ "\$R2_PATTERN" == *".R2."* ]]; then
+        R2_NAME="\${BASE_NAME/.R1./.R2.}"
+    elif [[ "\$R1_PATTERN" == *"_R1_"* ]] && [[ "\$R2_PATTERN" == *"_R2_"* ]]; then
+        R2_NAME="\${BASE_NAME/_R1_/_R2_}"
+    elif [[ "\$R1_PATTERN" == *"_R1."* ]] && [[ "\$R2_PATTERN" == *"_R2."* ]]; then
+        R2_NAME="\${BASE_NAME/_R1./_R2.}"
+    elif [[ "\$R1_PATTERN" == *".un.1."* ]] && [[ "\$R2_PATTERN" == *".un.2."* ]]; then
+        R2_NAME="\${BASE_NAME/.un.1./.un.2.}"
     else
+        # 使用提供的R2模式或尝试简单替换
+        R2_NAME="\${BASE_NAME/1/2}"
+    fi
+    
+    FQ2="\$DIR_NAME/\$R2_NAME"
+    
+    # 如果第一次尝试失败，使用其他常见模式
+    if [ ! -f "\$FQ2" ]; then
+        echo "尝试替代模式查找配对文件..." | tee -a "\$LOG_FILE"
+        
+        # 尝试常见的替换模式
+        # 模式1: .1. → .2.
+        R2_NAME_1="\$(echo "\$BASE_NAME" | sed 's/\.1\./\.2\./g')"
+        FQ2_1="\$DIR_NAME/\$R2_NAME_1"
+        
+        # 模式2: _1. → _2.
+        R2_NAME_2="\$(echo "\$BASE_NAME" | sed 's/_1\./_2\./g')"
+        FQ2_2="\$DIR_NAME/\$R2_NAME_2"
+        
+        # 模式3: _R1_ → _R2_
+        R2_NAME_3="\$(echo "\$BASE_NAME" | sed 's/_R1_/_R2_/g')"
+        FQ2_3="\$DIR_NAME/\$R2_NAME_3"
+        
+        # 模式4: _R1. → _R2.
+        R2_NAME_4="\$(echo "\$BASE_NAME" | sed 's/_R1\./_R2\./g')"
+        FQ2_4="\$DIR_NAME/\$R2_NAME_4"
+        
+        # 模式5: .un.1. → .un.2.
+        R2_NAME_5="\$(echo "\$BASE_NAME" | sed 's/\.un\.1\./\.un\.2\./g')"
+        FQ2_5="\$DIR_NAME/\$R2_NAME_5"
+        
+        # 检查哪个R2文件存在
+        if [ -f "\$FQ2_1" ]; then
+            FQ2="\$FQ2_1"
+            R2_NAME="\$R2_NAME_1"
+            echo "找到R2文件(模式1): \$FQ2" | tee -a "\$LOG_FILE"
+        elif [ -f "\$FQ2_2" ]; then
+            FQ2="\$FQ2_2"
+            R2_NAME="\$R2_NAME_2"
+            echo "找到R2文件(模式2): \$FQ2" | tee -a "\$LOG_FILE"
+        elif [ -f "\$FQ2_3" ]; then
+            FQ2="\$FQ2_3"
+            R2_NAME="\$R2_NAME_3"
+            echo "找到R2文件(模式3): \$FQ2" | tee -a "\$LOG_FILE"
+        elif [ -f "\$FQ2_4" ]; then
+            FQ2="\$FQ2_4"
+            R2_NAME="\$R2_NAME_4"
+            echo "找到R2文件(模式4): \$FQ2" | tee -a "\$LOG_FILE"
+        elif [ -f "\$FQ2_5" ]; then
+            FQ2="\$FQ2_5"
+            R2_NAME="\$R2_NAME_5"
+            echo "找到R2文件(模式5): \$FQ2" | tee -a "\$LOG_FILE"
+        fi
+    else
+        echo "根据配置模式找到R2文件: \$FQ2" | tee -a "\$LOG_FILE"
+    fi
+    
+    # 检查是否找到R2文件
+    if [ ! -f "\$FQ2" ]; then
         echo "警告: 未找到配对文件，尝试过所有常见模式，跳过\$BASE_NAME" | tee -a "\$LOG_FILE"
         continue
     fi
     
     # 提取样本ID (去除文件扩展名)
-    SAMPLE_ID=\$(echo "\$BASE_NAME" | sed 's/\.un\..*$//')
+    SAMPLE_ID=\$(echo "\$BASE_NAME" | sed -E 's/\.(un|paired)\.[12]\.(fq|fastq)(\.gz)?$//')
     
-    # 如果样本ID为空，则使用基本文件名
+    # 如果样本ID为空，则使用基本文件名，去除扩展名
     if [ -z "\$SAMPLE_ID" ]; then
         SAMPLE_ID=\$(echo "\$BASE_NAME" | sed 's/\.[^.]*$//')
     fi
     
     # 输出调试信息
     echo "处理样本: \$SAMPLE_ID" | tee -a "\$LOG_FILE"
-    echo "原始文件名: \$BASE_NAME" | tee -a "\$LOG_FILE"
-    echo "R2文件名: \$R2_NAME" | tee -a "\$LOG_FILE"
     echo "R1文件: \$FQ1" | tee -a "\$LOG_FILE" 
     echo "R2文件: \$FQ2" | tee -a "\$LOG_FILE"
     
@@ -532,7 +586,6 @@ for FQ1 in \$FQ1_FILES; do
 done
 
 echo "${group_name}处理完成于: \$(date)" | tee -a "\$LOG_FILE"
-
 EOF
         
         # 添加执行权限
@@ -701,14 +754,12 @@ else
         if [ \$? -eq 0 ]; then
             echo "合并\$LEVEL_NAME完成: \$COMBINED_OUT" | tee -a "\$LOG_FILE"
         else
-            echo "合并$LEVEL_NAME完成: $COMBINED_OUT" | tee -a "$LOG_FILE"
-        else
-            echo "错误: 合并$LEVEL_NAME失败" | tee -a "$LOG_FILE"
+            echo "错误: 合并\$LEVEL_NAME失败" | tee -a "\$LOG_FILE"
         fi
     done
 fi
 
-echo "Bracken分析完成于: $(date)" | tee -a "$LOG_FILE"
+echo "Bracken分析完成于: \$(date)" | tee -a "\$LOG_FILE"
 EOF
     
     chmod +x "$bracken_script"
@@ -724,7 +775,8 @@ function run_kraken_analysis {
     local threads="$5"
     local confidence="$6"
     local min_hit_groups="$7"
-    local file_pattern="$8"
+    local r1_pattern="$8"
+    local r2_pattern="$9"  # 添加r2_pattern参数
     
     if [ -z "$input_dir" ] || [ -z "$output_dir" ] || [ -z "$database_dir" ]; then
         log "ERROR" "Kraken2分析缺少必需参数"
@@ -737,8 +789,8 @@ function run_kraken_analysis {
     if [ -z "$confidence" ]; then confidence=${DEFAULT_CONFIDENCE}; fi
     if [ -z "$min_hit_groups" ]; then min_hit_groups=${DEFAULT_MIN_HIT_GROUPS}; fi
     
-    # 创建Kraken2脚本
-    create_kraken_scripts "$input_dir" "$output_dir" "$database_dir" "$threads" "$confidence" "$min_hit_groups" "$file_pattern"
+    # 创建Kraken2脚本，传递两种模式
+    create_kraken_scripts "$input_dir" "$output_dir" "$database_dir" "$threads" "$confidence" "$min_hit_groups" "$r1_pattern" "$r2_pattern"
     
     local parallel_script="${output_dir}/scripts/run_all_parallel.sh"
     
@@ -749,6 +801,8 @@ function run_kraken_analysis {
     
     log "SUCCESS" "Kraken2分析完成。"
 }
+
+
 
 
 # Part 3
@@ -1020,6 +1074,8 @@ EOF
 }
 
 
+
+
 # Part 4
 # 增强Bracken结果
 function enhance_bracken_results {
@@ -1164,6 +1220,7 @@ def enhance_bracken_file(bracken_file, taxonomy_map, output_file, level):
             
             # 对于非物种级别，尝试直接匹配
             if level != 'species' and name in taxonomy_map:
+                tax_info = taxonomy_map[name]
                 tax_info = taxonomy_map[name]
                 for l, col_name in level_columns.items():
                     if level_indices[l] <= current_index and l in tax_info:
@@ -1330,7 +1387,7 @@ function run_complete_workflow {
     
     # 运行Kraken2分析
     log "INFO" "步骤2: 运行Kraken2分析..."
-    run_kraken_analysis "$grouped_dir" "$kraken_dir" "$database_dir" "$max_parallel" "$threads" "$confidence" "$min_hit_groups" "$r1_pattern"
+    run_kraken_analysis "$grouped_dir" "$kraken_dir" "$database_dir" "$max_parallel" "$threads" "$confidence" "$min_hit_groups" "$r1_pattern" "$r2_pattern"
     
     # 运行Bracken分析
     log "INFO" "步骤3: 运行Bracken分析..."
@@ -1353,8 +1410,10 @@ function run_complete_workflow {
 }
 
 
-# Part 5
 
+
+
+# Part 5
 # 主函数
 function main {
     # 如果没有参数，显示帮助
@@ -1463,6 +1522,7 @@ function main {
             local confidence=$DEFAULT_CONFIDENCE
             local min_hit_groups=$DEFAULT_MIN_HIT_GROUPS
             local r1_pattern=""
+            local r2_pattern=""
             
             # 解析参数
             while [ $# -gt 0 ]; do
@@ -1503,6 +1563,10 @@ function main {
                         r1_pattern="$2"
                         shift 2
                         ;;
+                    --r2-pattern)
+                        r2_pattern="$2"
+                        shift 2
+                        ;;
                     *)
                         log "ERROR" "未知参数: $1"
                         exit 1
@@ -1517,7 +1581,7 @@ function main {
             fi
             
             # 执行函数
-            run_kraken_analysis "$input_dir" "$output_dir" "$database_dir" "$max_parallel" "$threads" "$confidence" "$min_hit_groups" "$r1_pattern"
+            run_kraken_analysis "$input_dir" "$output_dir" "$database_dir" "$max_parallel" "$threads" "$confidence" "$min_hit_groups" "$r1_pattern" "$r2_pattern"
             ;;
             
         bracken)
