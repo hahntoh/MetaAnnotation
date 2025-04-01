@@ -1,11 +1,10 @@
 #!/bin/bash
 #
-# MetaAnnotation v1.0
-# 一个用于宏基因组分析的流程脚本，使用Kraken2和Bracken进行分类学注释
+# Metannotation v1.0
+# 一个用于宏基因组分析的流程脚本，使用 Kraken2 和 Bracken 进行分类学注释
 #
 # 作者：Hahn
 # 日期：2025-03-27
-#
 
 set -e  # 出错时退出
 
@@ -52,11 +51,11 @@ log() {
 # 显示使用信息
 function show_usage {
     cat << EOF
-MetaGenPipe v${VERSION}
+Metannotatio v${VERSION}
 一个综合性的宏基因组分析流程
 
 用法:
-    ./MetaAnnotation.sh [命令] [选项]
+    ./metannotation.sh [命令] [选项]
 
 命令:
     setup         创建目录结构
@@ -227,7 +226,6 @@ function setup_directories {
 
 
 # Part 2
-
 # 将样本分组成批次
 function group_samples {
     local source_dir="$1"
@@ -646,7 +644,7 @@ EOF
     chmod +x "$parallel_script"
     log "INFO" "已创建并行执行脚本: $parallel_script"
     
-    # 创建Bracken脚本
+    # 创建Bracken脚本 - 使用双引号以确保变量被替换
     local bracken_script="${scripts_dir}/run_bracken.sh"
     
     cat > "$bracken_script" << EOF
@@ -719,45 +717,151 @@ done
 # 尝试合并结果
 COMBINE_SCRIPT=\$(which combine_bracken_outputs.py 2>/dev/null)
 if [ -z "\$COMBINE_SCRIPT" ]; then
-    echo "警告: 未找到combine_bracken_outputs.py脚本，跳过合并阶段" | tee -a "\$LOG_FILE"
-else
-    # 对每个分类级别合并结果
-    for LEVEL_NAME in "\${LEVEL_NAMES[@]}"; do
-        LEVEL_DIR="\${BRACKEN_DIR}/\${LEVEL_NAME}"
-        COMBINED_OUT="\${BRACKEN_DIR}/combined_bracken_\${LEVEL_NAME}.txt"
+    echo "警告: 未找到combine_bracken_outputs.py脚本，将使用内置Python代码合并" | tee -a "\$LOG_FILE"
+fi
+
+# 对每个分类级别合并结果
+for LEVEL_NAME in "\${LEVEL_NAMES[@]}"; do
+    LEVEL_DIR="\${BRACKEN_DIR}/\${LEVEL_NAME}"
+    COMBINED_OUT="\${BRACKEN_DIR}/combined_bracken_\${LEVEL_NAME}.txt"
+    
+    echo "合并\$LEVEL_NAME级别的Bracken结果" | tee -a "\$LOG_FILE"
+    
+    # 查找所有匹配的文件
+    FILE_LIST="\${LOG_DIR}/bracken_\${LEVEL_NAME}_files.txt"
+    find "\$LEVEL_DIR" -name "*_bracken_\${LEVEL_NAME}.txt" -type f > "\$FILE_LIST"
+    
+    # 检查是否找到了文件
+    if [ ! -s "\$FILE_LIST" ]; then
+        echo "警告: 未找到\${LEVEL_NAME}级别的Bracken结果文件，跳过合并" | tee -a "\$LOG_FILE"
+        continue
+    fi
+    
+    # 显示找到的文件
+    FILE_COUNT=\$(wc -l < "\$FILE_LIST")
+    echo "找到\$FILE_COUNT个\${LEVEL_NAME}级别的文件" | tee -a "\$LOG_FILE"
+    
+    # 尝试使用combine_bracken_outputs.py脚本
+    if [ ! -z "\$COMBINE_SCRIPT" ]; then
+        # 直接传递文件列表，避免复杂的字符串构建
+        "\$COMBINE_SCRIPT" --files \$(cat "\$FILE_LIST" | tr '\n' ' ') --output "\$COMBINED_OUT" 2>&1 | tee -a "\${LOG_DIR}/combine_\${LEVEL_NAME}.log"
+        COMBINE_STATUS=\$?
+    else
+        # 未找到脚本，设置状态为失败以使用备用方法
+        COMBINE_STATUS=1
+    fi
+    
+    # 如果脚本失败或不可用，使用Python备用方法
+    if [ \$COMBINE_STATUS -ne 0 ]; then
+        echo "尝试使用内置Python代码进行合并..." | tee -a "\$LOG_FILE"
         
-        echo "合并\$LEVEL_NAME级别的Bracken结果" | tee -a "\$LOG_FILE"
+        # 创建并运行Python合并脚本
+        PYTHON_MERGE_SCRIPT="\${LOG_DIR}/merge_\${LEVEL_NAME}.py"
+        cat > "\$PYTHON_MERGE_SCRIPT" << 'EOFPY'
+#!/usr/bin/env python3
+import os
+import sys
+import pandas as pd
+import glob
+
+# 获取命令行参数
+if len(sys.argv) < 3:
+    print(f"用法: {sys.argv[0]} <文件列表文件> <输出文件>")
+    sys.exit(1)
+
+file_list_file = sys.argv[1]
+output_file = sys.argv[2]
+
+# 读取文件列表
+with open(file_list_file, 'r') as f:
+    files = [line.strip() for line in f if line.strip()]
+
+print(f"处理 {len(files)} 个文件...")
+
+# 读取并合并所有文件
+dfs = []
+for file in files:
+    try:
+        # 从文件名提取样本名
+        sample_name = os.path.basename(file).split('_')[0]
+        print(f"处理样本: {sample_name}, 文件: {file}")
         
-        # 查找所有匹配的文件并保存到临时文件中
-        FILE_LIST="\${LOG_DIR}/bracken_\${LEVEL_NAME}_files.txt"
-        find "\$LEVEL_DIR" -name "*_bracken_\${LEVEL_NAME}.txt" > "\$FILE_LIST"
+        # 读取文件
+        df = pd.read_csv(file, sep='\t')
         
-        # 检查是否找到了文件
-        if [ ! -s "\$FILE_LIST" ]; then
-            echo "警告: 未找到\${LEVEL_NAME}级别的Bracken结果文件，跳过合并" | tee -a "\$LOG_FILE"
-            continue
-        fi
+        # 为数据框添加样本ID列
+        df['sample'] = sample_name
+        dfs.append(df)
+    except Exception as e:
+        print(f"处理文件 {file} 时出错: {e}")
+
+# 合并所有数据框
+if dfs:
+    print("合并所有数据框...")
+    merged = pd.concat(dfs, ignore_index=True)
+    
+    # 创建透视表
+    print("创建透视表...")
+    try:
+        # 确定要透视的列
+        value_columns = ['new_est_reads', 'fraction_total_reads']
+        # 确保所有必需的列都存在
+        required_columns = ['name', 'taxonomy_id', 'taxonomy_lvl', 'sample'] + value_columns
+        for col in required_columns:
+            if col not in merged.columns:
+                if col in value_columns:
+                    value_columns.remove(col)
+                if col != 'sample' and col not in value_columns:
+                    print(f"警告: 列 {col} 不在数据中，将被跳过")
         
-        # 显示找到的文件
-        FILE_COUNT=\$(wc -l < "\$FILE_LIST")
-        echo "找到\$FILE_COUNT个\${LEVEL_NAME}级别的文件" | tee -a "\$LOG_FILE"
+        # 创建透视表
+        if value_columns:
+            index_cols = [col for col in ['name', 'taxonomy_id', 'taxonomy_lvl'] if col in merged.columns]
+            result = merged.pivot_table(index=index_cols, 
+                                       columns='sample', 
+                                       values=value_columns,
+                                       aggfunc='first').reset_index()
+            
+            # 重命名列以避免多级索引
+            result.columns = ['_'.join(col).strip() if isinstance(col, tuple) else col for col in result.columns.values]
+            
+            # 保存结果
+            print(f"保存到文件: {output_file}")
+            result.to_csv(output_file, sep='\t', index=False)
+            print("合并成功!")
+            sys.exit(0)
+        else:
+            print("错误: 没有有效的值列可用于透视")
+            sys.exit(1)
+    except Exception as e:
+        print(f"创建透视表时出错: {e}")
         
-        # 构建文件参数列表
-        FILES_ARG=""
-        while IFS= read -r file; do
-            FILES_ARG+="\\"\\"\$file\\"\\"\\ "
-        done < "\$FILE_LIST"
+        # 如果透视失败，尝试简单拼接
+        try:
+            print("尝试简单拼接...")
+            merged.to_csv(output_file, sep='\t', index=False)
+            print("简单拼接成功!")
+            sys.exit(0)
+        except Exception as e2:
+            print(f"简单拼接也失败: {e2}")
+            sys.exit(1)
+else:
+    print("错误: 没有有效的数据可合并")
+    sys.exit(1)
+EOFPY
         
-        # 运行合并脚本
-        eval python "\$COMBINE_SCRIPT" --files \$FILES_ARG --output "\$COMBINED_OUT" 2>&1 | tee -a "\${LOG_DIR}/combine_\${LEVEL_NAME}.log"
+        # 运行Python脚本
+        python3 "\$PYTHON_MERGE_SCRIPT" "\$FILE_LIST" "\$COMBINED_OUT" 2>&1 | tee -a "\${LOG_DIR}/python_merge_\${LEVEL_NAME}.log"
         
         if [ \$? -eq 0 ]; then
-            echo "合并\$LEVEL_NAME完成: \$COMBINED_OUT" | tee -a "\$LOG_FILE"
+            echo "使用Python成功合并\$LEVEL_NAME: \$COMBINED_OUT" | tee -a "\$LOG_FILE"
         else
-            echo "错误: 合并\$LEVEL_NAME失败" | tee -a "\$LOG_FILE"
+            echo "错误: Python合并\$LEVEL_NAME失败" | tee -a "\$LOG_FILE"
         fi
-    done
-fi
+    else
+        echo "合并\$LEVEL_NAME完成: \$COMBINED_OUT" | tee -a "\$LOG_FILE"
+    fi
+done
 
 echo "Bracken分析完成于: \$(date)" | tee -a "\$LOG_FILE"
 EOF
@@ -801,6 +905,8 @@ function run_kraken_analysis {
     
     log "SUCCESS" "Kraken2分析完成。"
 }
+
+
 
 
 
@@ -1786,3 +1892,7 @@ function main {
 
 # 执行主函数
 main "$@"
+
+
+
+        

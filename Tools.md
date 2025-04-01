@@ -41,5 +41,5 @@ awk 'BEGIN{FS=OFS="\t"} NR==1{for(i=1;i<=NF;i++) if($i !~ /_frac/) col[++n]=i} {
 # 4、拆分 fq **文件**
 
 ```bash
-seqkit split2 -p 5 -O output_dir sample_R1.fq.gz sample_R2.fq.gz
+seqkit split2 -p 5 -O output_dir -1 sample_R1.fq.gz -2 sample_R2.fq.gz
 ```
