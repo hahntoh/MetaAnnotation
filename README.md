@@ -8,11 +8,11 @@
 ./MetaGenPipe.sh all -d /data/khanh/test -i /data/khanh/test/2.cleandata/ -b /public/database/kraken/kraken2/PlusPF/20241228 --r1-pattern ".un.1.fq.gz" --r2-pattern ".un.2.fq.gz" --size 1
 ```
 
-# MetaGenPipe 元基因组分析流程标准操作程序（SOP）
+# Metannotation 元基因组分析流程标准操作程序（SOP）
 
 ## 1. 简介
 
-MetaGenPipe 是一个全面的元基因组分析工具，用于使用 Kraken2 和 Bracken 进行分类学分析。此 SOP 将指导您完成从原始数据到分类分析结果的整个过程。
+Metannotatin 是一个全面的元基因组分析工具，用于使用 Kraken2 和 Bracken 进行分类学分析。此 SOP 将指导您完成从原始数据到分类分析结果的整个过程。
 
 ## 2. 先决条件
 
@@ -32,16 +32,16 @@ MetaGenPipe 是一个全面的元基因组分析工具，用于使用 Kraken2 �
 ### 3.1. 下载 MetaGenPipe 脚本
 
 ```shell
-# 将 MetaGenPipe.sh 脚本下载到工作目录
+# 将 Metannotation.sh 脚本下载到工作目录
 wget https://github.com/hahntoh/Metannotation/blob/main/Metannotation.sh
-chmod +x MetaGenPipe.sh
+chmod +x Metannotation.sh
 ```
 
 ### 3.2. 创建目录结构
 
 ```shell
 # 创建基本目录结构
-./MetaGenPipe.sh setup -d /path/to/your/project
+./Metannotation.sh setup -d /path/to/your/project
 ```
 
 ## 4. 准备输入数据
@@ -53,7 +53,7 @@ chmod +x MetaGenPipe.sh
 ### 5.1. 一步完成全流程
 
 ```shell
-./MetaGenPipe.sh all \
+./Metannotation.sh all \
   -d /path/to/your/project \
   -i /path/to/your/project/2.cleandata \
   -b /path/to/kraken2/database \
@@ -82,7 +82,7 @@ chmod +x MetaGenPipe.sh
 ### 6.1. 样本分组
 
 ```shell
-./MetaGenPipe.sh group \
+./Metannotation.sh group \
   -i /path/to/your/project/2.cleandata \
   -o /path/to/your/project/2.cleandata/grouped \
   --r1-pattern "*.r1.fq.gz" \
@@ -93,7 +93,7 @@ chmod +x MetaGenPipe.sh
 ### 6.2. Kraken2 分析
 
 ```shell
-./MetaGenPipe.sh kraken \
+./Metannotation.sh kraken \
   -i /path/to/your/project/2.cleandata/grouped \
   -o /path/to/your/project/5.annotation/kraken2 \
   -d /path/to/kraken2/database \
@@ -108,7 +108,7 @@ chmod +x MetaGenPipe.sh
 ### 6.3. Bracken 分析
 
 ```shell
-./MetaGenPipe.sh bracken \
+./Metannotation.sh bracken \
   -i /path/to/your/project/5.annotation/kraken2 \
   -d /path/to/kraken2/database \
   --read-len 150
@@ -123,7 +123,7 @@ chmod +x MetaGenPipe.sh
 ### 6.5. 增强Bracken结果
 
 ```shell
-./MetaGenPipe.sh enhance -k /path/to/your/project/5.annotation/kraken2
+./Metannotation.sh enhance -k /path/to/your/project/5.annotation/kraken2
 ```
 
 ## 7. 结果文件解析
